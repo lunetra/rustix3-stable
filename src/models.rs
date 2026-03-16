@@ -97,11 +97,7 @@ pub struct Inbounds {
         serialize_with = "se_json_opt_as_str"
     )]
     pub sniffing: Option<Sniffing>,
-    #[serde(
-        default,
-        deserialize_with = "de_json_opt_from_str_or_map",
-        serialize_with = "se_json_opt_as_str"
-    )]
+    #[serde(default)]
     pub allocate: Option<serde_json::Value>,
 }
 
