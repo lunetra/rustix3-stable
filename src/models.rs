@@ -353,7 +353,7 @@ pub struct User {
     pub limit_ip: Option<u32>,
     #[serde(rename = "totalGB")]
     #[serde(default)]
-    pub total_gb: Option<u32>,
+    pub total_gb: Option<u128>,
     #[serde(default)]
     pub expiry_time: Option<u64>,
     #[serde(default)]
@@ -374,7 +374,7 @@ pub struct UserRequest {
     pub email: String,
     pub limit_ip: u32,
     #[serde(rename = "totalGB")]
-    pub total_gb: u32,
+    pub total_gb: u128,
     pub expiry_time: u64,
     pub enable: bool,
     #[serde(default)]
