@@ -16,7 +16,7 @@ use crate::response_ext::ResponseJsonVerboseExt;
 use log::debug;
 use reqwest::header::RETRY_AFTER;
 use reqwest::multipart::{Form, Part};
-use reqwest::{Client as RClient, IntoUrl, Method, StatusCode, Url};
+use reqwest::{Client as RClient, IntoUrl, Method, StatusCode, Url, Proxy};
 use serde::Serialize;
 use tokio::time::{Duration, sleep};
 
@@ -29,6 +29,7 @@ pub struct ClientOptions {
     pub retry_methods: Vec<Method>,
     pub connect_timeout: Duration,
     pub request_timeout: Duration,
+    pub proxy_url: Option<String>,
 }
 
 impl Default for ClientOptions {
@@ -40,6 +41,7 @@ impl Default for ClientOptions {
             retry_methods: vec![Method::GET, Method::HEAD],
             connect_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(30),
+            proxy_url: None,
         }
     }
 }
@@ -78,17 +80,24 @@ impl Client {
         url: impl IntoUrl,
         options: ClientOptions,
     ) -> Result<Self> {
+        let mut builder = RClient::builder()
+            .cookie_store(true)
+            .connect_timeout(options.connect_timeout)
+            .timeout(options.request_timeout);
+
+        if let Some(ref proxy_url) = options.proxy_url {
+            let proxy = reqwest::Proxy::all(proxy_url)?;
+            builder = builder.proxy(proxy);
+        }
+
         let client = Self {
             username: username.into(),
             password: password.into(),
             url: url.into_url()?,
-            client: RClient::builder()
-                .cookie_store(true)
-                .connect_timeout(options.connect_timeout)
-                .timeout(options.request_timeout)
-                .build()?,
+            client: builder.build()?,
             options,
         };
+
         debug!("{:?}", client);
         let _ = client.login().await?;
         Ok(client)
