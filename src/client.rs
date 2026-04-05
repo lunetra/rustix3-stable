@@ -38,7 +38,7 @@ impl Default for ClientOptions {
             retry_count: 2,
             retry_base_delay: Duration::from_millis(200),
             retry_max_delay: Duration::from_secs(2),
-            retry_methods: vec![Method::GET, Method::HEAD],
+            retry_methods: vec![Method::GET, Method::HEAD, Method::POST, Method::PUT, Method::DELETE],
             connect_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(30),
             proxy_url: None,
