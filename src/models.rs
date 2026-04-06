@@ -79,10 +79,6 @@ pub struct Inbounds {
     pub listen: Option<String>,
     pub port: u16,
     pub protocol: InboundProtocols,
-    #[serde(
-        deserialize_with = "de_settings_from_str_or_map",
-        serialize_with = "se_settings_as_str"
-    )]
     pub settings: Settings,
     pub stream_settings: Option<StreamSettings>,
     pub tag: String,
