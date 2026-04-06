@@ -330,7 +330,7 @@ where
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
-    pub id: String,
+    pub id: Option<String>,
     pub email: String,
     #[serde(default)]
     pub flow: Option<String>,
