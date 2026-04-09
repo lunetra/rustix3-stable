@@ -372,7 +372,7 @@ pub struct User {
 #[serde(rename_all = "camelCase")]
 pub struct UserRequest {
     pub id: String,
-    pub flow: String,
+    pub flow: Option<String>,
     pub email: String,
     pub limit_ip: u32,
     #[serde(rename = "totalGB")]
