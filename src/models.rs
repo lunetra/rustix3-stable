@@ -365,7 +365,7 @@ pub struct User {
     #[serde(default)]
     pub total_gb: Option<u64>,
     #[serde(default)]
-    pub expiry_time: Option<u64>,
+    pub expiry_time: Option<i64>,
     #[serde(default)]
     pub enable: Option<bool>,
     #[serde(default)]
