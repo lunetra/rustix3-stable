@@ -385,7 +385,7 @@ pub struct UserRequest {
     pub limit_ip: u32,
     #[serde(rename = "totalGB")]
     pub total_gb: u64,
-    pub expiry_time: u64,
+    pub expiry_time: i64,
     pub enable: bool,
     #[serde(default)]
     pub tg_id: Option<TgId>,
