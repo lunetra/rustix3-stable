@@ -271,7 +271,7 @@ impl Client {
     pub async fn add_client_to_inbound(&self, req: &ClientRequest) -> Result<Option<()>> {
         let url = self.gen_inbounds_url(vec!["addClient"])?;
         let res: NullObjectResponse = self
-            .send_with_retry(self.client.post(url).json(req))
+            .send_with_retry(self.client.post(url).form(req))
             .await?
             .json_verbose()
             .await?;
@@ -638,23 +638,32 @@ impl Client {
 
     async fn send_with_retry(&self, builder: reqwest::RequestBuilder) -> Result<reqwest::Response> {
         if self.options.retry_count == 0 || builder.try_clone().is_none() {
+            debug!("Retry disabled for this request (count=0 or not clonable)");
             return Ok(builder.send().await?);
         }
 
         let mut last_err: Option<reqwest::Error> = None;
-        for attempt in 0..=self.options.retry_count {
-            let cloned = builder.try_clone().ok_or_else(|| {
-                Error::OtherError("request is not clonable for retry".into())
-            })?;
 
+        for attempt in 0..=self.options.retry_count {
+            let cloned = builder.try_clone().unwrap();
             let request = cloned.build()?;
             let method = request.method().clone();
+            let url = request.url().clone();
+
+            debug!("Attempt {}/{} | {} {}", 
+                   attempt + 1, 
+                   self.options.retry_count + 1, 
+                   method, 
+                   url);
 
             match self.client.execute(request).await {
                 Ok(resp) => {
+                    debug!("Response | Status: {} | URL: {}", resp.status(), url);
+
                     if attempt < self.options.retry_count && self.should_retry_status(&method, &resp) {
                         let delay = self.retry_delay(attempt, resp.headers().get(RETRY_AFTER));
-                        log::debug!("Retry status {} (attempt {}/{})", resp.status(), attempt, self.options.retry_count);
+                        warn!("Retrying due to status {} (attempt {}/{})", 
+                              resp.status(), attempt + 1, self.options.retry_count + 1);
                         sleep(delay).await;
                         continue;
                     }
@@ -665,8 +674,11 @@ impl Client {
                         && (err.is_connect() || err.is_timeout());
 
                     if is_proxy_related {
-                        log::warn!("Proxy-related error detected (attempt {}/{}): {}", 
-                                attempt, self.options.retry_count, err);
+                        warn!("Proxy-related error (attempt {}/{}): {}", 
+                              attempt + 1, self.options.retry_count + 1, err);
+                    } else {
+                        warn!("Request error (attempt {}/{}): {}", 
+                              attempt + 1, self.options.retry_count + 1, err);
                     }
 
                     if attempt < self.options.retry_count 
@@ -674,7 +686,7 @@ impl Client {
                     {
                         last_err = Some(err);
                         let delay = self.retry_delay(attempt, None);
-                        log::debug!("Retrying after proxy/network error (delay {:?})", delay);
+                        debug!("Retrying after error (delay {:?})", delay);
                         sleep(delay).await;
                         continue;
                     }
@@ -685,62 +697,6 @@ impl Client {
 
         Err(last_err.map(Into::into)
             .unwrap_or_else(|| Error::OtherError("request retry failed".into())))
-    }
-
-    async fn send_json<T: serde::de::DeserializeOwned>(
-        &self,
-        builder: reqwest::RequestBuilder,
-    ) -> Result<T> {
-        let response = self.send_with_retry(builder).await?;
-        let url = response.url().clone();
-        let status = response.status();
-
-        let bytes = match response.bytes().await {
-            Ok(b) => b,
-            Err(err) => {
-                log::error!(
-                    "BODY READ FAILED | URL: {} | Status: {} | Proxy: {} | Error: {}",
-                    url,
-                    status,
-                    self.options.proxy_url.as_deref().unwrap_or("none"),
-                    err
-                );
-                if self.options.proxy_url.is_some() {
-                    log::warn!("probably proxy issue (IncompleteBody)");
-                }
-                return Err(Error::Http(err));
-            }
-        };
-
-        if !status.is_success() {
-            let body_preview = String::from_utf8_lossy(&bytes);
-            log::warn!(
-                "NON-2XX RESPONSE | URL: {} | Status: {} | Body: {}",
-                url, status, body_preview
-            );
-        }
-
-        match serde_json::from_slice::<T>(&bytes) {
-            Ok(parsed) => Ok(parsed),
-            Err(json_err) => {
-                let body_preview = String::from_utf8_lossy(&bytes);
-                let preview = if body_preview.len() > 800 {
-                    &body_preview[..800]
-                } else {
-                    &body_preview
-                };
-
-                log::error!(
-                    "JSON PARSE FAILED | URL: {} | Status: {} | Error: {} | Body preview: {}",
-                    url, status, json_err, preview
-                );
-
-                Err(Error::OtherError(format!(
-                    "JSON decode failed: {} (URL: {})",
-                    json_err, url
-                )))
-            }
-        }
     }
 
     fn should_retry_status(&self, method: &Method, resp: &reqwest::Response) -> bool {
