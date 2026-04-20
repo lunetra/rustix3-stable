@@ -36,13 +36,13 @@ pub struct ClientOptions {
 impl Default for ClientOptions {
     fn default() -> Self {
         Self {
-            retry_count: 8,
-            retry_base_delay: Duration::from_millis(150),
-            retry_max_delay: Duration::from_secs(5),
+            retry_count: 5,
+            retry_base_delay: Duration::from_millis(200),
+            retry_max_delay: Duration::from_secs(4),
             retry_jitter: true,
             retry_methods: vec![Method::GET, Method::HEAD, Method::POST, Method::PUT, Method::DELETE],
-            connect_timeout: Duration::from_secs(10),
-            request_timeout: Duration::from_secs(60),
+            connect_timeout: Duration::from_secs(12),
+            request_timeout: Duration::from_secs(90),
             proxy_url: None,
         }
     }
@@ -85,7 +85,11 @@ impl Client {
         let mut builder = RClient::builder()
             .cookie_store(true)
             .connect_timeout(options.connect_timeout)
-            .timeout(options.request_timeout);
+            .timeout(options.request_timeout)
+            .tcp_keepalive(Some(Duration::from_secs(45)))
+            .http1_only(true)
+            .pool_idle_timeout(Duration::from_secs(120))
+            .pool_max_idle_per_host(20); 
 
         if let Some(ref proxy_url) = options.proxy_url {
             let proxy = reqwest::Proxy::all(proxy_url)?;
@@ -689,13 +693,13 @@ impl Client {
         }
         let status = resp.status();
         status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
-    }
+    } 
 
     fn should_retry_error(&self, method: &Method, err: &reqwest::Error) -> bool {
         if !self.is_idempotent(method) {
             return false;
         }
-        err.is_timeout() || err.is_connect()
+        err.is_timeout() || err.is_connect() || err.is_body() || err.is_decode()
     }
 
     fn is_idempotent(&self, method: &Method) -> bool {
