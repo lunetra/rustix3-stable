@@ -271,7 +271,9 @@ impl Client {
     pub async fn add_client_to_inbound(&self, req: &ClientRequest) -> Result<Option<()>> {
         let url = self.gen_inbounds_url(vec!["addClient"])?;
         let res: NullObjectResponse = self
-            .send_json(self.client.post(url).json(req))
+            .send_with_retry(self.client.post(url).form(req))
+            .await?
+            .json_verbose()
             .await?;
         res.into_result()
     }
