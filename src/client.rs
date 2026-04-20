@@ -638,7 +638,7 @@ impl Client {
 
     async fn send_with_retry(&self, builder: reqwest::RequestBuilder) -> Result<reqwest::Response> {
         if self.options.retry_count == 0 || builder.try_clone().is_none() {
-            debug!("Retry disabled for this request (count=0 or not clonable)");
+            log::debug!("Retry disabled for this request (count=0 or not clonable)");
             return Ok(builder.send().await?);
         }
 
@@ -650,7 +650,7 @@ impl Client {
             let method = request.method().clone();
             let url = request.url().clone();
 
-            debug!("Attempt {}/{} | {} {}", 
+            log::debug!("Attempt {}/{} | {} {}", 
                    attempt + 1, 
                    self.options.retry_count + 1, 
                    method, 
@@ -658,11 +658,11 @@ impl Client {
 
             match self.client.execute(request).await {
                 Ok(resp) => {
-                    debug!("Response | Status: {} | URL: {}", resp.status(), url);
+                    log::debug!("Response | Status: {} | URL: {}", resp.status(), url);
 
                     if attempt < self.options.retry_count && self.should_retry_status(&method, &resp) {
                         let delay = self.retry_delay(attempt, resp.headers().get(RETRY_AFTER));
-                        warn!("Retrying due to status {} (attempt {}/{})", 
+                        log::warn!("Retrying due to status {} (attempt {}/{})", 
                               resp.status(), attempt + 1, self.options.retry_count + 1);
                         sleep(delay).await;
                         continue;
@@ -674,10 +674,10 @@ impl Client {
                         && (err.is_connect() || err.is_timeout());
 
                     if is_proxy_related {
-                        warn!("Proxy-related error (attempt {}/{}): {}", 
+                        log::warn!("Proxy-related error (attempt {}/{}): {}", 
                               attempt + 1, self.options.retry_count + 1, err);
                     } else {
-                        warn!("Request error (attempt {}/{}): {}", 
+                        log::warn!("Request error (attempt {}/{}): {}", 
                               attempt + 1, self.options.retry_count + 1, err);
                     }
 
@@ -686,7 +686,7 @@ impl Client {
                     {
                         last_err = Some(err);
                         let delay = self.retry_delay(attempt, None);
-                        debug!("Retrying after error (delay {:?})", delay);
+                        log::debug!("Retrying after error (delay {:?})", delay);
                         sleep(delay).await;
                         continue;
                     }
