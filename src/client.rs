@@ -26,6 +26,7 @@ pub struct ClientOptions {
     pub retry_count: u32,
     pub retry_base_delay: Duration,
     pub retry_max_delay: Duration,
+    pub retry_jitter: bool,
     pub retry_methods: Vec<Method>,
     pub connect_timeout: Duration,
     pub request_timeout: Duration,
@@ -35,12 +36,13 @@ pub struct ClientOptions {
 impl Default for ClientOptions {
     fn default() -> Self {
         Self {
-            retry_count: 2,
-            retry_base_delay: Duration::from_millis(200),
-            retry_max_delay: Duration::from_secs(2),
+            retry_count: 8,
+            retry_base_delay: Duration::from_millis(150),
+            retry_max_delay: Duration::from_secs(5),
+            retry_jitter: true,
             retry_methods: vec![Method::GET, Method::HEAD, Method::POST, Method::PUT, Method::DELETE],
-            connect_timeout: Duration::from_secs(5),
-            request_timeout: Duration::from_secs(30),
+            connect_timeout: Duration::from_secs(10),
+            request_timeout: Duration::from_secs(60),
             proxy_url: None,
         }
     }
@@ -637,28 +639,39 @@ impl Client {
 
         let mut last_err: Option<reqwest::Error> = None;
         for attempt in 0..=self.options.retry_count {
-            let cloned = builder
-                .try_clone()
-                .ok_or_else(|| Error::OtherError("request is not clonable for retry".into()))?;
+            let cloned = builder.try_clone().ok_or_else(|| {
+                Error::OtherError("request is not clonable for retry".into())
+            })?;
+
             let request = cloned.build()?;
             let method = request.method().clone();
-            let response = self.client.execute(request).await;
-            match response {
+
+            match self.client.execute(request).await {
                 Ok(resp) => {
-                    if attempt < self.options.retry_count
-                        && self.should_retry_status(&method, &resp)
-                    {
+                    if attempt < self.options.retry_count && self.should_retry_status(&method, &resp) {
                         let delay = self.retry_delay(attempt, resp.headers().get(RETRY_AFTER));
+                        log::debug!("Retry status {} (attempt {}/{})", resp.status(), attempt, self.options.retry_count);
                         sleep(delay).await;
                         continue;
                     }
                     return Ok(resp);
                 }
                 Err(err) => {
-                    if attempt < self.options.retry_count && self.should_retry_error(&method, &err)
+                    let is_proxy_related = self.options.proxy_url.is_some() 
+                        && (err.is_connect() || err.is_timeout());
+
+                    if is_proxy_related {
+                        log::warn!("Proxy-related error detected (attempt {}/{}): {}", 
+                                attempt, self.options.retry_count, err);
+                    }
+
+                    if attempt < self.options.retry_count 
+                        && (self.should_retry_error(&method, &err) || is_proxy_related)
                     {
                         last_err = Some(err);
-                        sleep(self.retry_delay(attempt, None)).await;
+                        let delay = self.retry_delay(attempt, None);
+                        log::debug!("Retrying after proxy/network error (delay {:?})", delay);
+                        sleep(delay).await;
                         continue;
                     }
                     return Err(err.into());
@@ -666,10 +679,8 @@ impl Client {
             }
         }
 
-        if let Some(err) = last_err {
-            return Err(err.into());
-        }
-        Err(Error::OtherError("request retry failed".into()))
+        Err(last_err.map(Into::into)
+            .unwrap_or_else(|| Error::OtherError("request retry failed".into())))
     }
 
     fn should_retry_status(&self, method: &Method, resp: &reqwest::Response) -> bool {
@@ -691,24 +702,31 @@ impl Client {
         self.options.retry_methods.iter().any(|m| m == method)
     }
 
-    fn retry_delay(
-        &self,
-        attempt: u32,
-        retry_after: Option<&reqwest::header::HeaderValue>,
-    ) -> Duration {
+    fn retry_delay(&self, attempt: u32, retry_after: Option<&reqwest::header::HeaderValue>) -> Duration {
         if let Some(value) = retry_after
             && let Ok(s) = value.to_str()
             && let Ok(secs) = s.parse::<u64>()
         {
             return Duration::from_secs(secs);
         }
-        let backoff = 1u64.checked_shl(attempt).unwrap_or(u64::MAX);
-        let ms = self
-            .options
-            .retry_base_delay
+
+        let mut backoff = self.options.retry_base_delay
             .as_millis()
-            .saturating_mul(backoff as u128)
-            .min(self.options.retry_max_delay.as_millis());
-        Duration::from_millis(ms as u64)
+            .saturating_mul(1u128 << attempt.min(10)) as u64;
+
+        if backoff > self.options.retry_max_delay.as_millis() as u64 {
+            backoff = self.options.retry_max_delay.as_millis() as u64;
+        }
+
+        if self.options.retry_jitter {
+            let jitter = (backoff as f64 * 0.2) as u64;
+            let jitter_ms = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() % (jitter as u128 * 2)) as u64;
+            backoff = backoff.saturating_add(jitter_ms).saturating_sub(jitter);
+        }
+
+        Duration::from_millis(backoff)
     }
 }
