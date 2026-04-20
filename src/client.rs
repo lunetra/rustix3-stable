@@ -87,7 +87,7 @@ impl Client {
             .connect_timeout(options.connect_timeout)
             .timeout(options.request_timeout)
             .tcp_keepalive(Some(Duration::from_secs(45)))
-            .http1_only(true)
+            .http1_only()
             .pool_idle_timeout(Duration::from_secs(120))
             .pool_max_idle_per_host(20); 
 
