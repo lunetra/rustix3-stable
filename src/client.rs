@@ -271,9 +271,7 @@ impl Client {
     pub async fn add_client_to_inbound(&self, req: &ClientRequest) -> Result<Option<()>> {
         let url = self.gen_inbounds_url(vec!["addClient"])?;
         let res: NullObjectResponse = self
-            .send_with_retry(self.client.post(url).json(req))
-            .await?
-            .json_verbose()
+            .send_json(self.client.post(url).json(req))
             .await?;
         res.into_result()
     }
@@ -685,6 +683,62 @@ impl Client {
 
         Err(last_err.map(Into::into)
             .unwrap_or_else(|| Error::OtherError("request retry failed".into())))
+    }
+
+    async fn send_json<T: serde::de::DeserializeOwned>(
+        &self,
+        builder: reqwest::RequestBuilder,
+    ) -> Result<T> {
+        let response = self.send_with_retry(builder).await?;
+        let url = response.url().clone();
+        let status = response.status();
+
+        let bytes = match response.bytes().await {
+            Ok(b) => b,
+            Err(err) => {
+                log::error!(
+                    "BODY READ FAILED | URL: {} | Status: {} | Proxy: {} | Error: {}",
+                    url,
+                    status,
+                    self.options.proxy_url.as_deref().unwrap_or("none"),
+                    err
+                );
+                if self.options.proxy_url.is_some() {
+                    log::warn!("probably proxy issue (IncompleteBody)");
+                }
+                return Err(Error::Http(err));
+            }
+        };
+
+        if !status.is_success() {
+            let body_preview = String::from_utf8_lossy(&bytes);
+            log::warn!(
+                "NON-2XX RESPONSE | URL: {} | Status: {} | Body: {}",
+                url, status, body_preview
+            );
+        }
+
+        match serde_json::from_slice::<T>(&bytes) {
+            Ok(parsed) => Ok(parsed),
+            Err(json_err) => {
+                let body_preview = String::from_utf8_lossy(&bytes);
+                let preview = if body_preview.len() > 800 {
+                    &body_preview[..800]
+                } else {
+                    &body_preview
+                };
+
+                log::error!(
+                    "JSON PARSE FAILED | URL: {} | Status: {} | Error: {} | Body preview: {}",
+                    url, status, json_err, preview
+                );
+
+                Err(Error::OtherError(format!(
+                    "JSON decode failed: {} (URL: {})",
+                    json_err, url
+                )))
+            }
+        }
     }
 
     fn should_retry_status(&self, method: &Method, resp: &reqwest::Response) -> bool {
